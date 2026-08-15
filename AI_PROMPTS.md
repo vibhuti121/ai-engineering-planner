@@ -3,8 +3,8 @@
 Two different things are called "prompts" in this project and they are kept apart:
 
 - **Section A** — the prompts that ship *inside the product*. These are what the application sends
-  to the model at runtime. They live as `.txt` files under `app/prompts/` and are quoted verbatim
-  below.
+  to the model at runtime. They live as `.txt` files under `app/prompts/`, every one of them is
+  covered below, and Section A ends with how they are composed and versioned.
 - **Section B** — the prompts *I* used while building the application, and the corrections that
   were needed. This is the development trail, written as the work happened.
 - **Section C** — what changed in the product prompt across iterations, and why.
@@ -17,6 +17,10 @@ Two different things are called "prompts" in this project and they are kept apar
 
 Sent as the `system` parameter by the API adapter and prepended to the prompt by the CLI adapter.
 Both adapters send it byte-identically, which is what makes the two providers interchangeable.
+
+This is the **single-shot** prompt: one call, PRD in, whole plan out. A3–A6 below are the staged
+prompts that split the same job into read → plan → audit; the rules here are the ancestor of the
+rules there, and the reasoning behind each one is recorded in Section C.
 
 ```text
 You are a staff engineer breaking a Product Requirements Document into an implementation plan that
@@ -125,7 +129,92 @@ Leave that boundary to the application — you do not know the final graph when 
 Length: 80-200 words. A prompt short enough to paste and long enough to act on.
 ```
 
-### A3. The two lines the *application* writes, not the model
+### A3. `app/prompts/read_system.txt` — stage 1, the reader
+
+> *"You are a requirements analyst reading a Product Requirements Document. Your only job is to
+> UNDERSTAND the document and record what it says. You do not plan, decompose, or estimate."*
+
+Returns one JSON object and nothing else: `project_summary`, `domain`, `actors`, `requirements[]`,
+`constraints`, `out_of_scope`, `open_questions`. Its rules are all about restraint — extract, do
+not invent; reuse the PRD's own `FR-n` / `NFR-n` numbering rather than inventing a scheme; split a
+compound requirement into the separate things it actually asks for; and emit **no** tasks, no
+dependencies, no order, no complexity. The prompt says it in one line: *"You are the eyes, not the
+planner."*
+
+Separating reading from planning is the point. A single prompt doing both quietly trades one
+against the other — it starts skimming the PRD once it has enough to produce plausible tasks. This
+stage has nothing to gain by skimming, because it cannot produce tasks at all.
+
+### A4. `app/prompts/graph_system.txt` — stage 2, the planner
+
+> *"Your input is NOT the PRD. It is a structured understanding of it … Plan from that. Do not ask
+> for the document."*
+
+Returns `{"tasks": [...]}` only. Rules 1–11 are inherited from the single-shot prompt in A1 —
+including the rule that matters most, that the model states **dependencies and never order**. Two
+rules are new, and both exist because this stage has something A1 never had, a structured reading
+to work from:
+
+- **12** — every entry in `open_questions` must be resolved by picking the conventional option and
+  proceeding. An unanswered question in a plan handed to an autonomous agent is a stall.
+- **13** — `out_of_scope` is absolute. A planner that helpfully adds the thing the PRD explicitly
+  excluded is worse than one that misses a requirement, because nobody is looking for it.
+
+Rule 8 no longer carries the sizing bands inline; it delegates to the shared rubric in A6.
+
+### A5. `app/prompts/verify_system.txt` — stage 3, the auditor
+
+> *"You are the last check before the plan is handed to AI coding agents."*
+
+Given the understanding from stage 1 plus the plan as the application finally assembled it, this
+returns `{verdict, coverage_note, findings[]}` over exactly four checks, in order:
+`requirement-uncovered`, `dependency-missing`, `complexity-suspect`, `acceptance-criteria-missing`.
+Every finding must cite an id, there are at most ten, and the `verdict` derives mechanically from
+the severities rather than from the model's overall impression.
+
+Two constraints are load-bearing:
+
+- **The computed `order` and `wave` are declared off-limits** — *"correct by construction: it is not
+  a model output, and it is not yours to question. Audit the content, not the sequence."* The
+  ordering comes from a topological sort. Letting a model second-guess it would give back exactly
+  the guarantee the design exists to provide.
+- **`dependency-missing` carries an explicit carve-out** against flagging redundant transitive
+  edges. Without it the auditor reliably "finds" that A should depend on C when A → B → C already
+  says so, and buries the real findings under noise.
+
+The auditor **reports and never rewrites** — see `ASSUMPTIONS.md` #22 for why.
+
+### A6. `app/prompts/sizing_rubric.txt` — a shared fragment, not a prompt
+
+The literal S/M/L bands (S: one file or endpoint, under an hour · M: a few files or a new table
+with the code around it, half a day · L: cross-cutting, or containing genuine algorithmic or
+integration risk, a day or more), plus the requirement that each `rationale` names the clause it
+is invoking.
+
+It is a separate file because it is composed into **both** the planner and the auditor. Its own
+header says so: *"applied literally — this is the same rubric the plan is later audited against"*.
+Duplicating the bands into two prompts would work right up until someone edited one of them, at
+which point the auditor would start disagreeing with the planner for no reason a reader could see.
+
+### How the prompts are composed
+
+`app/prompts/__init__.py` holds one table and derives everything else from it:
+
+```
+read   = read_system.txt
+graph  = graph_system.txt  + sizing_rubric.txt + agent_prompt_guidance.txt
+verify = verify_system.txt + sizing_rubric.txt
+
+stage version = "graph-v1.<sha256(composed bytes)[:8]>"      e.g. read-v1.9f3c1a02
+```
+
+The version is **derived from the composed bytes**, not declared. Editing any fragment changes the
+hash of every stage that includes it, which invalidates exactly those cache entries and no others —
+so the sizing rubric changing correctly invalidates both the planner and the auditor. The `-v1`
+prefix survives only because a pure hash is unreadable in a log line. This replaces the hand-bumped
+`PROMPT_VERSION` constant; the trade-off is recorded in `ASSUMPTIONS.md` #15.
+
+### A7. The two lines the *application* writes, not the model
 
 `PlanningService._scope_agent_prompts` appends this to every `agent_prompt` after the topological
 sort has run:
@@ -239,6 +328,32 @@ characters and the error blamed the wrong cause. Two things were wrong and both 
 `tests/test_pdf_validator.py` now pins both sides of that boundary. The fixed build plans the same
 file into 8 tasks across 3 waves with zero warnings.
 
+**B10 — a three-minute request that looks like a hang.**
+> "A cache miss takes two to four minutes and reports nothing while it runs. Make the run visible
+> in the terminal and in the browser, without making the service know about either."
+
+The correction was to what I asked for, not to the answer. My first framing was "log the stages",
+which would have put a logger inside `PlanningService` and tied domain logic to a sink. What
+shipped instead is an injected `on_stage(stage, detail)` callback defaulting to a no-op, fanned out
+by the route to two listeners — the logger, and a bounded in-memory tracker the browser polls at
+`/api/progress/{trace}`. The service still does not know whether anybody is listening, and every
+existing caller and test was unaffected by the change.
+
+Server-sent events would be the streaming answer. They were rejected because they meant making a
+synchronous service async for no difference a reviewer could observe. The cost of the polling
+choice is stated rather than hidden: progress is up to one second stale and the tracker is
+per-process (`ASSUMPTIONS.md` #20).
+
+**B11 — splitting the prompt.**
+> "One prompt is reading the PRD and planning from it in the same breath. Split reading from
+> planning, and add an audit pass — but the audit must not be able to touch the execution order."
+
+The last clause is the whole design. An auditor that can rewrite the plan can silently break the
+one guarantee the application makes by construction, so `verify_system.txt` is handed the computed
+`order` and `wave` and told explicitly that they are not its to question. It reports findings; the
+application decides what to do with them. Section C records why this does not contradict the
+earlier decision *not* to ask the model to self-verify its dependency graph.
+
 ---
 
 ## Section C — how the product prompt evolved
@@ -252,3 +367,6 @@ file into 8 tasks across 3 waves with zero warnings.
 | "No catch-all tasks", naming the specific offenders | "Polish the UI" and "handle edge cases" appeared in nearly every run. Naming them is more effective than a general instruction to be specific. |
 | Every task must cite ≥1 `requirement_ids` | Makes coverage checkable. The service now warns when a requirement is implemented by no task — a gap a reader would otherwise have to find by hand. |
 | Deliberately **not** added: a self-verification instruction | Asking the model to check its own dependency graph would trade tokens and latency for a guarantee the topological sort already provides deterministically. |
+| Split one prompt into three — read (A3), plan (A4), audit (A5) | The single prompt was doing three jobs against each other: it began skimming the PRD as soon as it had enough to emit plausible tasks. Giving the reader no ability to produce tasks removes the incentive. The planner then works from a structured reading rather than re-deriving one. |
+| Lifted the S/M/L bands into a shared fragment (A6) composed into both the planner and the auditor | Two copies of a rubric stay in sync exactly until one is edited. Sharing the file makes "the auditor applies the planner's rubric" true by construction rather than by discipline. |
+| The audit stage is **content-only**, and is still barred from touching the order | This is not a reversal of the row above. The auditor checks requirement coverage, missing dependencies, suspect sizing and absent acceptance criteria — things no deterministic check can catch. The ordering remains the topological sort's guarantee, and the prompt says so in as many words. |

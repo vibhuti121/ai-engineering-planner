@@ -105,3 +105,14 @@ pre {
 }
 .copy { margin-top: 6px; }
 .downloads { display: flex; gap: 10px; margin-top: 26px; }
+
+/* live progress — stages reported by the server, not a client-side animation */
+#steps { list-style: none; padding: 0; margin: 14px 0 0; }
+.step {
+  color: var(--muted); font-size: 13px; padding: 5px 0 5px 24px; position: relative;
+}
+.step::before { content: "○"; position: absolute; left: 4px; }
+.step.done { color: var(--muted); }
+.step.done::before { content: "✓"; color: var(--s); }
+.step.active { color: var(--text); font-weight: 600; }
+.step.active::before { content: "▸"; color: var(--accent); }

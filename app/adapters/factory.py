@@ -1,17 +1,18 @@
-"""Provider resolution — the only place that decides which adapter is live.
+"""Provider resolution — the only place that decides which transport is live.
 
 `auto` encodes the intended lifecycle of this application: it was developed against a Claude
 subscription through the CLI, and it runs in production against the API. Set the key and the API
-takes over; nothing else changes.
+takes over; nothing else changes. With neither, it falls back to replaying captured fixtures so a
+fresh clone still works.
 """
 
 from __future__ import annotations
 
-from app.adapters.api_planner import AnthropicApiPlanner
-from app.adapters.cli_planner import ClaudeCliPlanner, cli_available
-from app.adapters.demo_planner import DemoPlanner, fixture_available
+from app.adapters.api_client import AnthropicApiClient
+from app.adapters.cli_client import ClaudeCliClient, cli_available
+from app.adapters.fixture_client import FixtureLlmClient, fixture_available
 from app.config import ANTHROPIC_API_KEY, PLANNER_MODEL, PLANNER_PROVIDER
-from app.ports.planner import Planner, PlannerError
+from app.ports.llm import LlmClient, LlmError
 
 
 def resolve_provider(requested: str | None = None) -> str:
@@ -25,17 +26,15 @@ def resolve_provider(requested: str | None = None) -> str:
     return "demo"
 
 
-def build_planner(requested: str | None = None) -> Planner:
+def build_client(requested: str | None = None) -> LlmClient:
     provider = resolve_provider(requested)
     if provider == "api":
-        return AnthropicApiPlanner(PLANNER_MODEL)
+        return AnthropicApiClient(PLANNER_MODEL)
     if provider == "cli":
-        return ClaudeCliPlanner(PLANNER_MODEL)
+        return ClaudeCliClient(PLANNER_MODEL)
     if provider == "demo":
-        return DemoPlanner()
-    raise PlannerError(
-        f"Unknown provider {provider!r}. Use one of: auto, api, cli, demo.", status_code=500
-    )
+        return FixtureLlmClient()
+    raise LlmError(f"Unknown provider {provider!r}. Use one of: auto, api, cli, demo.", status_code=500)
 
 
 def provider_status() -> dict[str, object]:
@@ -47,3 +46,6 @@ def provider_status() -> dict[str, object]:
         "cli_available": cli_available(),
         "fixture_available": fixture_available(),
     }
+
+
+__all__ = ["build_client", "provider_status", "resolve_provider"]

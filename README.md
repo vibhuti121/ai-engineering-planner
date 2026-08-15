@@ -7,6 +7,8 @@ Each task carries a title, a description ending in acceptance criteria, its depe
 implementation order, an S/M/L complexity estimate with a stated rationale, the requirement ids it
 satisfies, and a **pasteable prompt for a coding agent** (the bonus deliverable).
 
+> **Reviewers:** [`DELIVERABLES.md`](DELIVERABLES.md) maps each requested deliverable to its file.
+
 ---
 
 ## Quickstart
@@ -42,6 +44,31 @@ curl -s -F file=@samples/sample-prd.pdf localhost:8000/api/plan | jq .
 
 A live plan takes **2–4 minutes** — a 17-task plan is ~23,000 output tokens and that is simply what
 generating it costs. The second upload of the same PDF is instant (see *Caching* below).
+
+### Watching a run
+
+Because that wait is long enough to look like a hang, the run reports itself on both surfaces. The
+terminal prints each stage as it is entered, not when the request finally completes:
+
+```
+11:58:55  INFO  planner  validating     2 pages, 3520 chars of text layer
+11:58:55  INFO  planner  cache-lookup   plan_id 44d249ee66ea861a MISS
+11:58:55  INFO  planner  model-call     cli · claude-sonnet-5 — generating, this is the slow step
+11:58:55  INFO  cli      prompt is 8751 chars; waiting up to 600s for the model
+12:02:19  INFO  cli      returncode 0, 24193 bytes of stdout
+12:02:19  INFO  planner  model-returned 204s, 17 tasks, 23011 output tokens
+```
+
+The browser shows the same stages as a live checklist with a running clock. It is not an animation —
+it polls the server for the stage the request is genuinely in:
+
+```bash
+curl -s -F file=@samples/sample-prd.pdf "localhost:8000/api/plan?trace=demo-1" &
+curl -s localhost:8000/api/progress/demo-1 | jq .
+# {"stage":"model-call","detail":"cli · claude-sonnet-5 — generating…","elapsed_s":6.0,"done":false}
+```
+
+`trace` is optional and client-generated; omit it and everything behaves exactly as before.
 
 ---
 
@@ -92,7 +119,7 @@ nothing that cannot, is**:
 | In the key | Why |
 |---|---|
 | Normalized text | The PRD's *content*, not its bytes — re-exporting the same document from another tool changes the bytes but not the plan, and should still hit. |
-| `prompt_version` | Editing `system_prompt.txt` changes the output, so it must invalidate every cached plan. Bump the constant in `app/config.py` whenever the prompt changes. |
+| `prompt_version` | Editing a prompt changes the output, so it must invalidate every cached plan. Nothing to bump by hand: each stage's version is `sha256` of its own composed prompt bytes (see `app/prompts/__init__.py`), so an edit invalidates exactly the stages it affects. |
 | `model` | A different model is a different plan. |
 | `provider_kind` | The API adapter sends the PDF natively, the CLI adapter sends extracted text. They can legitimately differ, so they must not share a slot. |
 
@@ -148,11 +175,13 @@ one replaceable implementation of one interface rather than something threaded t
 
 ```
 app/
-├── domain/          models.py · ordering.py        pure logic, no I/O, no framework imports
-├── ports/           planner.py                     the Planner ABC
+├── domain/          models.py · ordering.py · document.py    pure logic, no I/O, no framework imports
+├── ports/           planner.py                               the Planner ABC
 ├── adapters/        cli_planner · api_planner · demo_planner · plan_parser · factory
 ├── services/        planning_service · pdf_validator · cache_key · plan_store · markdown_renderer
-├── prompts/         system_prompt.txt · agent_prompt_guidance.txt
+├── prompts/         read_system · graph_system · verify_system · sizing_rubric
+│                    · agent_prompt_guidance · system_prompt
+├── observability.py stage logging + the tracker the browser polls
 └── main.py          FastAPI routes only — no business logic
 ```
 
@@ -172,7 +201,8 @@ enough to change output, which is exactly why `provider_kind` is in the cache ke
 | Method | Path | Purpose |
 |---|---|---|
 | GET | `/api/health` | status, active provider, model, prompt version |
-| POST | `/api/plan` | multipart `file=@prd.pdf` → full plan. `?refresh=true` forces regeneration, `?provider=` overrides per request |
+| POST | `/api/plan` | multipart `file=@prd.pdf` → full plan. `?refresh=true` forces regeneration, `?provider=` overrides per request, `?trace=` opts into progress reporting |
+| GET | `/api/progress/{trace_id}` | `{stage, detail, elapsed_s, done}` for a run in flight — polled once a second by the UI. Optional: omit `?trace=` and nothing changes |
 | GET | `/api/plans` | in-memory history, newest first |
 | GET | `/api/plans/{id}` | re-fetch by content-addressed id |
 | GET | `/api/plans/{id}/markdown` | markdown download |

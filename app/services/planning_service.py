@@ -11,6 +11,7 @@ object, so the second response is not merely equivalent to the first, it *is* th
 from __future__ import annotations
 
 import time
+from collections.abc import Callable
 from datetime import datetime, timezone
 
 from app.config import MAX_TASKS
@@ -35,21 +36,46 @@ class PlanningService:
         planner: Planner,
         prompt_version: str,
         refresh: bool = False,
+        on_stage: Callable[[str, str], None] | None = None,
     ) -> PlanResponse:
+        # Optional so every existing caller and test is unaffected; the service does not know or
+        # care whether anybody is listening.
+        stage = on_stage or (lambda name, detail: None)
+
+        stage("validating", f"reading {filename}")
         document = validate_and_extract(raw, filename)
+        stage(
+            "validating",
+            f"{document.page_count} pages, {document.char_count} chars of text layer",
+        )
+
         plan_id = compute_plan_id(document, planner.model, planner.kind)
 
         if not refresh:
             cached = self._store.get(plan_id)
             if cached is not None:
+                stage("cache-lookup", f"plan_id {plan_id} HIT — returning stored plan, no model call")
                 # Return a copy so a caller mutating meta.cache cannot corrupt the stored plan.
                 served = cached.model_copy(deep=True)
                 served.meta.cache = "hit"
                 return served
+        stage(
+            "cache-lookup",
+            f"plan_id {plan_id} {'BYPASSED (refresh=true)' if refresh else 'MISS'}",
+        )
 
+        stage(
+            "model-call",
+            f"{planner.kind} · {planner.model} — generating, this is the slow step (2-4 min)",
+        )
         started = time.perf_counter()
         output = planner.plan(document)
         duration_ms = int((time.perf_counter() - started) * 1000)
+        stage(
+            "model-returned",
+            f"{duration_ms // 1000}s, {len(output.extraction.tasks)} tasks, "
+            f"{output.output_tokens} output tokens",
+        )
 
         extraction = output.extraction
         if not extraction.tasks:
@@ -57,6 +83,7 @@ class PlanningService:
                 "The model returned no tasks. Is this document actually a PRD?", status_code=422
             )
 
+        stage("ordering", "topological sort over the dependency graph")
         result = self._orderer.order(extraction.tasks)
         warnings = list(result.warnings)
         if len(result.tasks) > MAX_TASKS:
@@ -65,6 +92,11 @@ class PlanningService:
                 "is probably decomposed below the useful level."
             )
         warnings.extend(_coverage_warnings(extraction, result.tasks))
+
+        stage(
+            "ordering",
+            f"{len(result.tasks)} tasks → {len(result.waves)} waves, {len(warnings)} warnings",
+        )
 
         self._scope_agent_prompts(result.tasks)
 
@@ -92,9 +124,11 @@ class PlanningService:
                 source_filename=document.filename,
             ),
         )
+        stage("rendering", "markdown")
         plan.markdown = markdown_renderer.render(plan)
 
         self._store.put(plan)
+        stage("stored", f"plan_id {plan_id} — a re-upload of this PRD is now free")
         return plan
 
     # ── internals ─────────────────────────────────────────────────────────────

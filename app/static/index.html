@@ -30,6 +30,14 @@
       </div>
     </form>
     <p id="status" class="status"></p>
+    <ol id="steps" hidden>
+      <li class="step" data-stage="validating">Reading the PDF</li>
+      <li class="step" data-stage="cache-lookup">Checking the cache</li>
+      <li class="step" data-stage="model-call">Generating the plan — the slow step</li>
+      <li class="step" data-stage="ordering">Ordering by dependency graph</li>
+      <li class="step" data-stage="rendering">Rendering markdown</li>
+      <li class="step" data-stage="stored">Stored</li>
+    </ol>
   </section>
 
   <section id="result" hidden>

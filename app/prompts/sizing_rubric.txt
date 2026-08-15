@@ -1,0 +1,9 @@
+SIZING RUBRIC (applied literally — this is the same rubric the plan is later audited against)
+
+- S: one file or one endpoint, no new schema, no new dependency. Under ~1 hour.
+- M: a few files, or a new table plus the code that reads and writes it. Half a day.
+- L: cross-cutting, or contains genuine algorithmic or integration risk — third-party payments,
+  a settlement or scheduling algorithm, realtime sync, a migration over live data. A day or more.
+
+The `rationale` must say which clause of the rubric applies. If a task is L only because it is
+vague, it should be split instead.

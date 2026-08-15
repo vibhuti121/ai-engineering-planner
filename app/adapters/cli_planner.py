@@ -11,6 +11,7 @@ behavioural difference from the API adapter, and it is why `kind` is part of the
 from __future__ import annotations
 
 import json
+import logging
 import shutil
 import subprocess
 
@@ -19,6 +20,8 @@ from app.config import PLANNER_TIMEOUT
 from app.ports.planner import Planner, PlannerError, PlannerOutput
 from app.prompts import agent_prompt_guidance, system_prompt
 from app.services.pdf_validator import PdfDocument
+
+logger = logging.getLogger("cli")
 
 CLI_BINARY = "claude"
 
@@ -77,10 +80,18 @@ class ClaudeCliPlanner(Planner):
             "Return the JSON object now."
         )
 
+        argv = [
+            CLI_BINARY, "-p", "--output-format", "json", "--model", self.model
+        ] + NON_AGENTIC_FLAGS
+
+        # This subprocess is where the minutes go. Without these two lines the terminal is silent
+        # for the whole of it, which reads as a hang.
+        logger.info("running: %s", " ".join(argv[:6]) + " …")
+        logger.info("prompt is %d chars; waiting up to %ds for the model", len(prompt), PLANNER_TIMEOUT)
+
         try:
             completed = subprocess.run(
-                [CLI_BINARY, "-p", "--output-format", "json", "--model", self.model]
-                + NON_AGENTIC_FLAGS,
+                argv,
                 input=prompt,
                 capture_output=True,
                 text=True,
@@ -90,6 +101,10 @@ class ClaudeCliPlanner(Planner):
             raise PlannerError(f"The `{CLI_BINARY}` CLI is not on PATH.") from exc
         except subprocess.TimeoutExpired as exc:
             raise PlannerError(f"The CLI did not respond within {PLANNER_TIMEOUT}s.") from exc
+
+        logger.info(
+            "returncode %d, %d bytes of stdout", completed.returncode, len(completed.stdout or "")
+        )
 
         if completed.returncode != 0:
             detail = (completed.stderr or completed.stdout or "no output").strip()[:400]

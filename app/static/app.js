@@ -54,6 +54,27 @@ $("file").addEventListener("change", (e) => chooseFile(e.target.files[0]));
 );
 dropzone.addEventListener("drop", (e) => chooseFile(e.dataTransfer.files[0]));
 
+// ── progress ──────────────────────────────────────────────────────────────────
+// The stages come from the SERVER, not a client-side animation. A progress display that guesses
+// is worse than none — this one reports the step the request is actually in.
+const STAGES = ["validating", "cache-lookup", "model-call", "ordering", "rendering", "stored"];
+
+function paintSteps(stage, detail, elapsed) {
+  const reached = STAGES.indexOf(stage);
+  document.querySelectorAll("#steps .step").forEach((li, i) => {
+    li.classList.toggle("done", reached > i);
+    li.classList.toggle("active", reached === i);
+    const label = li.dataset.label || (li.dataset.label = li.textContent);
+    li.textContent =
+      reached === i ? `${label} — ${detail} (${elapsed})` : label;
+  });
+}
+
+function clock(seconds) {
+  const s = Math.floor(seconds);
+  return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}`;
+}
+
 // ── submit ────────────────────────────────────────────────────────────────────
 $("upload-form").addEventListener("submit", async (e) => {
   e.preventDefault();
@@ -64,21 +85,41 @@ $("upload-form").addEventListener("submit", async (e) => {
   status.textContent = "Planning… a cache miss calls the model and takes a couple of minutes.";
   $("submit").disabled = true;
 
+  const trace = (crypto.randomUUID && crypto.randomUUID()) || String(Date.now());
+  const steps = $("steps");
+  steps.hidden = false;
+  paintSteps("validating", "starting", "0:00");
+
+  const poll = setInterval(async () => {
+    try {
+      const r = await fetch(`/api/progress/${trace}`);
+      if (!r.ok) return;
+      const p = await r.json();
+      paintSteps(p.stage, p.detail, clock(p.elapsed_s));
+    } catch (_) {
+      /* a dropped poll is not an error — the upload itself is still in flight */
+    }
+  }, 1000);
+
   const body = new FormData();
   body.append("file", selectedFile);
 
   try {
-    const query = $("refresh").checked ? "?refresh=true" : "";
-    const response = await fetch(`/api/plan${query}`, { method: "POST", body });
+    const params = new URLSearchParams({ trace });
+    if ($("refresh").checked) params.set("refresh", "true");
+    const response = await fetch(`/api/plan?${params}`, { method: "POST", body });
     const payload = await response.json();
     if (!response.ok) throw new Error(payload.error || `HTTP ${response.status}`);
     currentPlan = payload;
     render(payload);
     status.textContent = "";
+    steps.hidden = true;
   } catch (err) {
     status.className = "status error";
     status.textContent = err.message;
+    steps.hidden = true;
   } finally {
+    clearInterval(poll);
     $("submit").disabled = false;
   }
 });
