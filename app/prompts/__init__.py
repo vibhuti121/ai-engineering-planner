@@ -40,7 +40,7 @@ _COMPOSITION: dict[str, tuple[str, ...]] = {
 
 # The human-facing half of the version. Bump when a stage's *contract* changes (a new field, a
 # different job) — not for wording, which the content hash already tracks.
-_DECLARED: dict[str, str] = {"read": "read-v1", "graph": "graph-v1", "verify": "verify-v1"}
+_DECLARED: dict[str, str] = {"read": "read-v1", "graph": "graph-v1", "verify": "verify-v2"}
 
 
 @lru_cache(maxsize=None)
@@ -79,16 +79,10 @@ def agent_prompt_guidance() -> str:
     return _read("agent_prompt_guidance.txt")
 
 
-def system_prompt() -> str:
-    """The pre-split single prompt. Retained only until the old adapters are deleted."""
-    return _read("system_prompt.txt")
-
-
 __all__ = [
     "STAGES",
     "Stage",
     "agent_prompt_guidance",
-    "system_prompt",
     "prompt_version_summary",
     "prompt_versions",
     "stage_prompt_version",

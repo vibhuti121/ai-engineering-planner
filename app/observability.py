@@ -36,8 +36,10 @@ STAGE_SEQUENCE: tuple[str, ...] = (
     "stored",
 )
 
-# Ordering runs *before* verifying: the verifier audits the computed sequence, so it cannot run
-# until `TaskOrderer` has produced one.
+# Ordering runs *before* verifying: the reviewer reads the computed sequence, so it cannot run
+# until `TaskOrderer` has produced one. The stage *id* stays `verifying` — it is the wire name
+# shared with `models.json`, the artifact folder and the `data-stage` attribute; only the label
+# below moved when the stage stopped grading and started advising.
 
 STAGE_LABELS: dict[str, str] = {
     "validating": "Validating the PDF",
@@ -45,7 +47,7 @@ STAGE_LABELS: dict[str, str] = {
     "reading": "① Reading the PRD",
     "graphing": "② Building the task graph",
     "ordering": "Ordering (topological sort)",
-    "verifying": "③ Verifying the plan",
+    "verifying": "③ Reviewing the plan",
     "rendering": "Rendering markdown",
     "stored": "Stored",
 }

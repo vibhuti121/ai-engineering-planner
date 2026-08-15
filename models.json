@@ -1,0 +1,6 @@
+{
+  "default": "claude-sonnet-5",
+  "read": "",
+  "graph": "claude-opus-5",
+  "verify": "claude-opus-5"
+}

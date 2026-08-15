@@ -12,11 +12,13 @@ from fastapi import FastAPI, File, Query, Request, Response, UploadFile
 from fastapi.responses import FileResponse, JSONResponse, PlainTextResponse
 from fastapi.staticfiles import StaticFiles
 
-from app.adapters.factory import build_planner, provider_status
-from app.config import PLAN_CACHE_SIZE, PROMPT_VERSION, STATIC_DIR
+from app.adapters.factory import build_client, provider_status
+from app.config import ARTIFACTS_DIR, PLAN_CACHE_SIZE, STATIC_DIR
 from app.domain.models import PlanResponse
 from app.observability import ProgressTracker, configure_logging
-from app.ports.planner import PlannerError
+from app.ports.llm import LlmError
+from app.prompts import prompt_version_summary, prompt_versions
+from app.services.artifact_store import ArtifactStore
 from app.services.pdf_validator import PdfRejected
 from app.services.plan_store import InMemoryPlanStore
 from app.services.planning_service import PlanningService
@@ -31,7 +33,7 @@ app = FastAPI(
 )
 
 store = InMemoryPlanStore(capacity=PLAN_CACHE_SIZE)
-service = PlanningService(store)
+service = PlanningService(store, ArtifactStore(ARTIFACTS_DIR))
 progress = ProgressTracker()
 
 
@@ -40,21 +42,36 @@ async def _pdf_rejected(_: Request, exc: PdfRejected) -> JSONResponse:
     return JSONResponse(status_code=exc.status_code, content={"error": exc.message})
 
 
-@app.exception_handler(PlannerError)
-async def _planner_error(_: Request, exc: PlannerError) -> JSONResponse:
+# `AgentError` subclasses `LlmError`, so one handler covers a transport failure and a schema failure
+# alike — both are "the model stage did not produce a usable answer" and both carry a status code.
+@app.exception_handler(LlmError)
+async def _llm_error(_: Request, exc: LlmError) -> JSONResponse:
     return JSONResponse(status_code=exc.status_code, content={"error": exc.message})
 
 
 @app.get("/api/health")
 def health() -> dict[str, object]:
-    return {"status": "ok", "prompt_version": PROMPT_VERSION, **provider_status()}
+    # `prompt_version` stays flat and single-valued for the UI banner; `prompt_versions` is the
+    # per-stage breakdown that tells you which stage a cache bust came from.
+    return {
+        "status": "ok",
+        "prompt_version": prompt_version_summary(),
+        "prompt_versions": prompt_versions(),
+        **provider_status(),
+    }
 
 
 @app.post("/api/plan", response_model=PlanResponse)
 def create_plan(
     response: Response,
     file: UploadFile = File(..., description="The PRD, as a PDF"),
-    refresh: bool = Query(False, description="Bypass the cache and regenerate"),
+    refresh: bool = Query(False, description="Bypass every cache and re-run all three stages"),
+    from_stage: str | None = Query(
+        None,
+        alias="from",
+        description="Re-run this stage and everything after it (read|graph|verify); earlier stages "
+        "are reused from artifacts/",
+    ),
     provider: str | None = Query(None, description="Override the provider for this call"),
     trace: str | None = Query(None, description="Client-generated id to poll /api/progress with"),
 ) -> PlanResponse:
@@ -76,12 +93,12 @@ def create_plan(
         plan = service.create_plan(
             raw=raw,
             filename=filename,
-            planner=build_planner(provider),
-            prompt_version=PROMPT_VERSION,
+            client=build_client(provider),
             refresh=refresh,
+            from_stage=from_stage,
             on_stage=on_stage,
         )
-    except (PdfRejected, PlannerError) as exc:
+    except (PdfRejected, LlmError) as exc:
         # Mark the trace failed before the exception handlers turn it into JSON, otherwise a poller
         # sits on the last successful stage forever.
         logger.warning("%-14s %s", "failed", exc.message)
@@ -124,7 +141,7 @@ def list_plans() -> dict[str, object]:
 def get_plan(plan_id: str) -> PlanResponse:
     plan = store.peek(plan_id)
     if plan is None:
-        raise PlannerError(f"No plan with id {plan_id!r} is in memory.", status_code=404)
+        raise LlmError(f"No plan with id {plan_id!r} is in memory.", status_code=404)
     return plan
 
 
@@ -132,7 +149,7 @@ def get_plan(plan_id: str) -> PlanResponse:
 def get_plan_markdown(plan_id: str) -> Response:
     plan = store.peek(plan_id)
     if plan is None:
-        raise PlannerError(f"No plan with id {plan_id!r} is in memory.", status_code=404)
+        raise LlmError(f"No plan with id {plan_id!r} is in memory.", status_code=404)
     return PlainTextResponse(
         plan.markdown,
         media_type="text/markdown; charset=utf-8",

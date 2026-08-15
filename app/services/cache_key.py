@@ -17,6 +17,9 @@ A stage's key folds in four things:
 * ``prompt_version`` — *this stage's* prompt, content-hashed by ``app.prompts``.
 * ``model`` and ``kind`` — a different model is a different answer, and the CLI adapter sends
   extracted text where the API adapter sends the PDF natively, so the two must not share a slot.
+  ``model`` is *this stage's* model, taken from ``LlmClient.model_for(stage)``: models can be set
+  per stage, and pointing the graph stage at a stronger model must invalidate the graph artifact
+  without touching the read artifact, exactly as a prompt edit does.
 
 Deliberately *not* in any key: the filename, the upload timestamp, the raw bytes of a text-bearing
 PDF. None change the output, and including any of them would turn every re-upload into a miss.
@@ -92,16 +95,21 @@ def stage_key(
     return _digest(stage, parent, payload_hash, prompt_version, model, kind)
 
 
-def intent_key(doc: str, prompt_versions: dict[str, str], model: str, kind: str) -> str:
+def intent_key(doc: str, prompt_versions: dict[str, str], models: dict[str, str], kind: str) -> str:
     """The L1 (in-memory) key — everything the run intends, computable *before* any model call.
 
     The chained keys cannot serve the "re-upload is instant" path, because ``graph_key`` depends on
     bytes that stage 1 has not produced yet. This one depends on nothing but the PDF and the
     configuration, so it can be looked up first. On a hit the stored plan is returned whole; on a
     miss the chain runs and the disk cache still gives partial reuse.
+
+    It folds in **every** stage's model, not one: this key stands in for the whole chain, so
+    re-pointing any single stage at a different model has to miss here too — otherwise L1 would
+    keep serving a plan the per-stage keys have already invalidated.
     """
     versions = "|".join(f"{name}={prompt_versions[name]}" for name in sorted(prompt_versions))
-    return _digest("intent", doc, versions, model, kind)
+    used = "|".join(f"{name}={models[name]}" for name in sorted(models))
+    return _digest("intent", doc, versions, used, kind)
 
 
 __all__ = ["KEY_LENGTH", "content_hash", "doc_id", "intent_key", "stage_key"]

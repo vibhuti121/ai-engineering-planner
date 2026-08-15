@@ -12,6 +12,10 @@ Two asymmetries with the API, both handled here and nowhere else:
 * **No binary input.** The PRD is sent as text extracted by pypdf. That is why `kind` is part of
   every cache key: the two providers genuinely see different input for the same document.
 
+Per-stage models work here exactly as they do on the API. `--model` is fixed for the life of one
+`claude -p` process, but each stage is its own `complete()` call and therefore its own process — so
+the flag is per stage already, and `model_for` just decides what goes in it.
+
 `_render_single_turn` exists so all three agents assemble their turn identically. Three call sites
 building a prompt string by hand is three chances to drift.
 """
@@ -72,15 +76,21 @@ def _render_single_turn(request: LlmRequest) -> str:
 class ClaudeCliClient(LlmClient):
     kind = "cli"
 
-    def __init__(self, model: str) -> None:
+    def __init__(self, model: str, models: dict[str, str] | None = None) -> None:
+        #: The fallback, and what every stage uses unless `models` names something else for it.
         self.model = model
+        self._models = dict(models or {})
+
+    def model_for(self, stage: str) -> str:
+        return self._models.get(stage) or self.model
 
     def complete(self, request: LlmRequest) -> LlmResult:
         if request.document is not None and not request.document.has_text:
             raise LlmError(_no_text_layer(request), status_code=422)
 
         prompt = _render_single_turn(request)
-        argv = [CLI_BINARY, "-p", "--output-format", "json", "--model", self.model] + NON_AGENTIC_FLAGS
+        model = self.model_for(request.stage)
+        argv = [CLI_BINARY, "-p", "--output-format", "json", "--model", model] + NON_AGENTIC_FLAGS
 
         # This subprocess is where the minutes go. Without these two lines the terminal is silent
         # for the whole of it, which reads as a hang.

@@ -70,11 +70,35 @@ h2 { font-size: 17px; margin: 30px 0 8px; }
 }
 .chip.hit { border-color: var(--ok); color: var(--ok); }
 .chip.miss { border-color: var(--accent); color: var(--accent); }
+/* Per-stage chips are deliberately quieter than the headline cache chip — they are detail, not
+   verdict. `hit-disk` reads as green because a reused stage is the good outcome. */
+.chip.stage { font-variant-numeric: tabular-nums; opacity: .85; }
+.chip.stage.hit-disk, .chip.stage.hit-memory { border-color: var(--ok); color: var(--ok); }
+.chip.stage.skipped { border-color: var(--warn); color: var(--warn); }
 
 #warnings .warning {
   border-left: 3px solid var(--warn); background: var(--panel);
   padding: 8px 12px; margin-bottom: 6px; font-size: 13px; border-radius: 0 6px 6px 0;
 }
+
+#verification:not(:empty) {
+  border: 1px solid var(--line); border-radius: 10px; background: var(--panel);
+  padding: 12px 14px; margin-bottom: 14px;
+}
+/* Deliberately not styled as an alarm: no verdict badge, no severity colours. The review advises,
+   so it reads as prose with citations — nothing here should say "this plan failed". */
+.verify-note { color: var(--muted); font-size: 13px; margin: 0; }
+.review-heading {
+  font-size: 12px; text-transform: uppercase; letter-spacing: .06em;
+  color: var(--muted); margin: 14px 0 0;
+}
+
+.finding {
+  display: flex; gap: 10px; align-items: baseline; flex-wrap: wrap;
+  border-top: 1px solid var(--line); padding: 8px 0 0; margin-top: 8px; font-size: 13px;
+}
+.finding-message { flex: 1 1 260px; }
+.finding-cites { color: var(--muted); font-size: 12px; font-family: ui-monospace, monospace; }
 
 table { width: 100%; border-collapse: collapse; font-size: 14px; }
 th, td { text-align: left; padding: 7px 10px; border-bottom: 1px solid var(--line); vertical-align: top; }

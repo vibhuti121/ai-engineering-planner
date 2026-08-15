@@ -11,7 +11,7 @@ from __future__ import annotations
 from app.adapters.api_client import AnthropicApiClient
 from app.adapters.cli_client import ClaudeCliClient, cli_available
 from app.adapters.fixture_client import FixtureLlmClient, fixture_available
-from app.config import ANTHROPIC_API_KEY, PLANNER_MODEL, PLANNER_PROVIDER
+from app.config import ANTHROPIC_API_KEY, PLANNER_MODEL, PLANNER_MODELS, PLANNER_PROVIDER
 from app.ports.llm import LlmClient, LlmError
 
 
@@ -29,9 +29,9 @@ def resolve_provider(requested: str | None = None) -> str:
 def build_client(requested: str | None = None) -> LlmClient:
     provider = resolve_provider(requested)
     if provider == "api":
-        return AnthropicApiClient(PLANNER_MODEL)
+        return AnthropicApiClient(PLANNER_MODEL, models=PLANNER_MODELS)
     if provider == "cli":
-        return ClaudeCliClient(PLANNER_MODEL)
+        return ClaudeCliClient(PLANNER_MODEL, models=PLANNER_MODELS)
     if provider == "demo":
         return FixtureLlmClient()
     raise LlmError(f"Unknown provider {provider!r}. Use one of: auto, api, cli, demo.", status_code=500)
@@ -42,6 +42,9 @@ def provider_status() -> dict[str, object]:
     return {
         "provider": provider,
         "model": "fixture" if provider == "demo" else PLANNER_MODEL,
+        # Empty for `demo` on purpose: the fixture transport calls no model at all and reports the
+        # literal "fixture", so publishing a per-stage map there would be a health endpoint that lies.
+        "models": {} if provider == "demo" else dict(PLANNER_MODELS),
         "api_key_present": bool(ANTHROPIC_API_KEY),
         "cli_available": cli_available(),
         "fixture_available": fixture_available(),

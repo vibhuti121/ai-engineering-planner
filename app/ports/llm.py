@@ -58,5 +58,19 @@ class LlmClient(ABC):
     @abstractmethod
     def complete(self, request: LlmRequest) -> LlmResult: ...
 
+    def model_for(self, stage: str) -> str:
+        """Which model this transport will *actually* use for `stage`.
+
+        Per-stage model selection and the cache have to agree, and this method is where they do.
+        `stage_key` folds this exact string into the key, so a transport that quietly swapped models
+        per stage would otherwise file one model's answer under another model's key and serve it
+        back forever. A transport with a single model returns it — which is the default here.
+
+        Note this is *not* the branch-on-stage the class docstring warns about: that rule is about
+        **representation** (how a document becomes bytes), which no adapter may vary by stage. Which
+        model answers is configuration, and it is declared to the key layer rather than hidden.
+        """
+        return self.model
+
 
 __all__ = ["LlmClient", "LlmError", "LlmRequest", "LlmResult"]

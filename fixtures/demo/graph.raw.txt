@@ -1,0 +1,250 @@
+{
+  "tasks": [
+    {
+      "id": "auth-signup-api",
+      "title": "Add email/password signup endpoint",
+      "description": "Create POST /api/auth/signup that creates a user with a bcrypt-hashed password. Adds the users table. Acceptance: valid signup returns 201 and a users row whose password_hash is not the plaintext; duplicate email returns 409; password under 8 chars returns 400.",
+      "dependencies": [],
+      "complexity": "M",
+      "rationale": "Introduces the new users table plus the code that reads and writes it, matching the M clause.",
+      "requirement_ids": [
+        "FR-1"
+      ],
+      "agent_prompt": "Implement user signup. Create a `users` table (id UUID PK, email TEXT UNIQUE NOT NULL, password_hash TEXT NOT NULL, created_at TIMESTAMPTZ) and a POST /api/auth/signup endpoint accepting {email, password}. Hash the password with bcrypt (cost >=10); never store or log plaintext. Validate email format and password length >=8, returning 400 with a message on failure. Return 409 if the email already exists. On success return 201 with the created user's id and email (never the hash). Done when: a valid signup returns 201 and creates a users row with a bcrypt hash; a duplicate email returns 409; a short password returns 400.\n\nAlready done (do not rebuild): nothing — this is a starting task.\nNot your scope (handled separately): Add login endpoint issuing 30-day session"
+    },
+    {
+      "id": "auth-login-session",
+      "title": "Add login endpoint issuing 30-day session",
+      "description": "Create POST /api/auth/login that verifies credentials and issues a session token valid 30 days. Adds the sessions table. Acceptance: correct credentials return 200 with a token and a sessions row expiring ~30 days out; wrong password returns 401.",
+      "dependencies": [
+        "auth-signup-api"
+      ],
+      "complexity": "M",
+      "rationale": "Introduces the new sessions table plus the code that reads and writes it, matching the M clause.",
+      "requirement_ids": [
+        "FR-1"
+      ],
+      "agent_prompt": "Implement login and session issuance. Create a `sessions` table (id UUID PK, user_id FK users, token_hash TEXT NOT NULL, expires_at TIMESTAMPTZ NOT NULL, created_at TIMESTAMPTZ) and POST /api/auth/login accepting {email, password}. Verify the bcrypt hash; on success generate a random session token, store only its hash in sessions with expires_at = now + 30 days, and return the raw token to the client (httpOnly cookie or response body). On failure return 401 with a generic message that does not reveal whether the email or password was wrong. Done when: valid login returns 200 with a token and a corresponding sessions row expiring ~30 days later; invalid credentials return 401.\n\nAlready done (do not rebuild): Add email/password signup endpoint\nNot your scope (handled separately): Add session-authentication middleware"
+    },
+    {
+      "id": "auth-middleware",
+      "title": "Add session-authentication middleware",
+      "description": "Build middleware that resolves the authenticated user from a session token and rejects invalid or expired sessions. Acceptance: requests without a valid, unexpired session return 401; valid sessions attach the correct user to the request.",
+      "dependencies": [
+        "auth-login-session"
+      ],
+      "complexity": "S",
+      "rationale": "Single middleware file, no new schema, no new dependency — sub-hour work.",
+      "requirement_ids": [
+        "FR-1"
+      ],
+      "agent_prompt": "Implement authentication middleware. Add a requireAuth middleware function that reads the session token from the request, hashes it, looks it up in the `sessions` table, checks expires_at > now, and attaches the resolved user (e.g. req.user) before calling next(). If the token is missing, unknown, or expired, respond 401 and do not call next(). Handle malformed tokens without throwing an unhandled error. Done when: a request with no token returns 401; a request with an expired session's token returns 401; a request with a valid unexpired session succeeds and req.user matches the session's user_id.\n\nAlready done (do not rebuild): Add login endpoint issuing 30-day session\nNot your scope (handled separately): Add group creation endpoint and schema; Add per-notification-type preference settings"
+    },
+    {
+      "id": "groups-create-api",
+      "title": "Add group creation endpoint and schema",
+      "description": "Create POST /api/groups that creates a group with the creator as owner and first member. Adds groups and group_members tables. Acceptance: creation returns 201 with a group id and a group_members row for the creator with role='owner'.",
+      "dependencies": [
+        "auth-middleware"
+      ],
+      "complexity": "M",
+      "rationale": "Introduces the new groups and group_members tables plus the code that reads and writes them.",
+      "requirement_ids": [
+        "FR-2"
+      ],
+      "agent_prompt": "Implement group creation. Create a `groups` table (id UUID PK, name TEXT NOT NULL, base_currency TEXT NOT NULL, owner_id FK users, created_at) and a `group_members` table (group_id FK groups, user_id FK users, role TEXT CHECK IN ('owner','member'), joined_at, PRIMARY KEY(group_id, user_id)). Add authenticated POST /api/groups accepting {name, base_currency}. In one transaction, insert the group with owner_id = the caller, and insert a group_members row for the caller with role='owner'. Validate name and base_currency are non-empty, returning 400 otherwise. Done when: a valid request returns 201 with the group id, and a group_members row exists for the caller with role='owner'; a missing name returns 400.\n\nAlready done (do not rebuild): Add session-authentication middleware\nNot your scope (handled separately): Add group-membership authorization middleware"
+    },
+    {
+      "id": "notifications-preferences-api",
+      "title": "Add per-notification-type preference settings",
+      "description": "Create GET/PATCH /api/users/me/notification-preferences for the three switchable notification types. Adds the notification_preferences table. Acceptance: a new user reads all three as true by default; a PATCH persists an individual toggle.",
+      "dependencies": [
+        "auth-middleware"
+      ],
+      "complexity": "M",
+      "rationale": "Introduces the new notification_preferences table plus the code that reads and writes it.",
+      "requirement_ids": [
+        "FR-8"
+      ],
+      "agent_prompt": "Implement notification preference settings. Create a `notification_preferences` table (user_id PK/FK users, group_added BOOLEAN NOT NULL DEFAULT true, expense_recorded BOOLEAN NOT NULL DEFAULT true, weekly_digest BOOLEAN NOT NULL DEFAULT true). Add authenticated GET /api/users/me/notification-preferences returning the caller's row (creating it with defaults on first read if absent), and PATCH /api/users/me/notification-preferences accepting any subset of {group_added, expense_recorded, weekly_digest} and updating only the provided fields. Done when: GET for a user with no existing row returns all three flags as true; PATCH {expense_recorded: false} persists, and a subsequent GET reflects expense_recorded=false while the other two remain true.\n\nAlready done (do not rebuild): Add session-authentication middleware\nNot your scope (handled separately): Send group-added and expense-recorded emails; Add weekly open-balances digest email job"
+    },
+    {
+      "id": "membership-authorization",
+      "title": "Add group-membership authorization middleware",
+      "description": "Build reusable middleware enforcing that only members of a group can access its group-scoped routes, without leaking group existence to non-members. Acceptance: a non-member or unknown group id returns 404; a member proceeds with membership info attached.",
+      "dependencies": [
+        "groups-create-api"
+      ],
+      "complexity": "S",
+      "rationale": "Single middleware file, no new schema, no new dependency — sub-hour work.",
+      "requirement_ids": [
+        "NFR-3"
+      ],
+      "agent_prompt": "Implement group-membership authorization. Add a requireGroupMembership middleware that, for routes with a :groupId (or :id) param, looks up group_members for req.user.id and that group id and attaches the row (e.g. req.membership) before calling next(). If no matching row exists — whether the group id is unknown or simply not the caller's group — respond 404 (not 403), so callers cannot distinguish 'wrong group' from 'no access' by guessing ids. This middleware will be reused by other group-scoped routes. Done when: a request to a group-scoped route as a non-member, and as a caller using a nonexistent group id, both return 404; a request from an actual member proceeds with req.membership populated.\n\nAlready done (do not rebuild): Add group creation endpoint and schema\nNot your scope (handled separately): Add owner-only rename, remove, transfer endpoints; Add single-use 7-day invite links; Add expense creation with three split types"
+    },
+    {
+      "id": "group-owner-management-api",
+      "title": "Add owner-only rename, remove, transfer endpoints",
+      "description": "Create owner-only endpoints to rename a group, remove a member, and transfer ownership. Acceptance: non-owners get 403 on all three; a successful transfer leaves exactly one group_members row with role='owner'.",
+      "dependencies": [
+        "membership-authorization"
+      ],
+      "complexity": "M",
+      "rationale": "A few files implementing three related endpoints on the existing schema.",
+      "requirement_ids": [
+        "FR-2"
+      ],
+      "agent_prompt": "Implement owner-only group management. Add PATCH /api/groups/:id accepting {name} to rename the group; DELETE /api/groups/:id/members/:userId to remove a member (must not target the current owner); POST /api/groups/:id/transfer-ownership accepting {newOwnerUserId} that, in one transaction, sets the caller's group_members.role to 'member' and the target's role to 'owner'. All three require the caller's role to be 'owner', returning 403 otherwise. Ensure the invariant of exactly one owner per group holds after every transfer. Done when: a non-owner calling any of the three endpoints gets 403; a rename updates groups.name; a transfer leaves exactly one group_members row with role='owner', now belonging to the new owner.\n\nAlready done (do not rebuild): Add group-membership authorization middleware\nNot your scope (handled separately): Add paginated group activity feed"
+    },
+    {
+      "id": "group-invitations-api",
+      "title": "Add single-use 7-day invite links",
+      "description": "Create owner-only invite creation and an accept endpoint that adds the accepting user to the group. Adds the invitations table. Acceptance: an invite expires after 7 days; accepting before expiry adds membership; expired or reused tokens return 410.",
+      "dependencies": [
+        "membership-authorization"
+      ],
+      "complexity": "M",
+      "rationale": "Introduces the new invitations table plus the code that reads and writes it.",
+      "requirement_ids": [
+        "FR-3"
+      ],
+      "agent_prompt": "Implement group invitations. Create an `invitations` table (id UUID PK, group_id FK groups, email TEXT, token TEXT UNIQUE NOT NULL, expires_at TIMESTAMPTZ, accepted_at TIMESTAMPTZ NULL). Add POST /api/groups/:id/invitations accepting {email}, restricted to callers whose role is 'owner', which generates a cryptographically random token (>=128 bits) and sets expires_at = now + 7 days. Add authenticated POST /api/invitations/:token/accept which, if accepted_at is null and expires_at is in the future, inserts a group_members row for the caller with role='member' and sets accepted_at = now; otherwise returns 410. Done when: an invite creates an invitations row with a 7-day expiry; accepting it once before expiry adds a group_members row and sets accepted_at; accepting again, or accepting after expiry, returns 410.\n\nAlready done (do not rebuild): Add group-membership authorization middleware\nNot your scope (handled separately): Send group-added and expense-recorded emails; Add paginated group activity feed"
+    },
+    {
+      "id": "expenses-create-api",
+      "title": "Add expense creation with three split types",
+      "description": "Create POST /api/groups/:id/expenses persisting an expense and its splits (equal, exact, or percentage) as integer minor units. Adds expenses and expense_splits tables. Acceptance: each split type persists shares summing exactly to the total; a mismatched split returns 400 with the numeric difference.",
+      "dependencies": [
+        "membership-authorization"
+      ],
+      "complexity": "L",
+      "rationale": "Genuine algorithmic risk: percentage splits must reconcile to the cent via remainder distribution across integer minor units, matching the rubric's algorithmic-risk clause.",
+      "requirement_ids": [
+        "FR-4",
+        "NFR-1"
+      ],
+      "agent_prompt": "Implement expense creation with split validation. Create an `expenses` table (id, group_id FK, description TEXT, amount_minor BIGINT, currency TEXT, expense_date DATE, payer_id FK users, created_by FK users, created_at) and `expense_splits` table (id, expense_id FK, user_id FK, share_minor BIGINT). Add POST /api/groups/:id/expenses accepting {description, amount_minor, date, payer_id, split_type: 'equal'|'exact'|'percentage', splits}, restricted to group members. All amounts are integers in minor units — never floats. For 'equal', divide amount_minor evenly, distributing any leftover cents deterministically (e.g. largest-remainder or first-N members) so shares sum exactly to amount_minor. For 'percentage', convert percentages to minor-unit shares the same way. For 'exact', validate the caller-supplied shares sum to amount_minor; if they do not, return 400 including the numeric difference in the message. Reject participants who are not group members. Done when: equal, exact, and percentage requests each persist expense_splits rows summing exactly to amount_minor; a mismatched exact split returns 400 stating the difference.\n\nAlready done (do not rebuild): Add group-membership authorization middleware\nNot your scope (handled separately): Add expense edit/delete with audit trail; Add per-counterparty group balances endpoint; Send group-added and expense-recorded emails; Add CSV export of group expense history"
+    },
+    {
+      "id": "expenses-edit-delete-api",
+      "title": "Add expense edit/delete with audit trail",
+      "description": "Create PUT and DELETE endpoints for an expense, writing every change to an append-only audit trail. Adds the audit_log table. Acceptance: an edit updates splits and inserts an audit_log row; a delete inserts an audit_log row; no route ever updates or deletes an audit_log row.",
+      "dependencies": [
+        "expenses-create-api"
+      ],
+      "complexity": "M",
+      "rationale": "A few files (routes plus a new audit_log table) built on the existing expenses schema.",
+      "requirement_ids": [
+        "FR-5"
+      ],
+      "agent_prompt": "Implement expense editing, deletion, and an immutable audit trail. Create an `audit_log` table (id, group_id FK, expense_id FK, actor_id FK users, action TEXT CHECK IN ('update','delete'), diff JSONB, created_at) with no UPDATE or DELETE route ever exposed for it. Add PUT /api/expenses/:id (any group member may call it) that re-validates the new splits sum to amount_minor exactly (same rule as expense creation), updates expenses/expense_splits, and inserts an audit_log row capturing a before/after diff. Add DELETE /api/expenses/:id that removes (or soft-deletes) the expense and inserts an audit_log row with action='delete'. Both must 404 for callers who are not members of the expense's group. Done when: a valid edit updates the splits and creates a matching audit_log row with the actor and diff; a delete removes the expense and creates an audit_log row; a mismatched edit split returns 400.\n\nAlready done (do not rebuild): Add expense creation with three split types\nNot your scope (handled separately): Add paginated group activity feed"
+    },
+    {
+      "id": "balances-view-api",
+      "title": "Add per-counterparty group balances endpoint",
+      "description": "Create GET /api/groups/:id/balances returning each member's owed/owing amounts per counterparty, computed in SQL from expenses, splits, and settlements. Acceptance: balances sum to zero for a group; the endpoint meets the 500ms p95 target at 20 members/5,000 expenses.",
+      "dependencies": [
+        "expenses-create-api"
+      ],
+      "complexity": "L",
+      "rationale": "Cross-cutting aggregation across expenses, splits, and settlements under a strict 500ms p95 performance requirement, matching the rubric's cross-cutting/integration-risk clause.",
+      "requirement_ids": [
+        "FR-6",
+        "NFR-2"
+      ],
+      "agent_prompt": "Implement the group balances view. Add GET /api/groups/:id/balances (member-only) that computes, per member, their net position against every other counterparty in the group by aggregating expense_splits (payer credited, participants debited) minus recorded settlements. Compute entirely in integer minor units in a single SQL aggregation (no per-row application-loop over thousands of expenses) and add indexes such as on expenses(group_id) and expense_splits(expense_id, user_id) to hit the performance target. Response should list, per counterparty pair, the net amount owed. Done when: for a seeded group the returned balances sum to zero across the group; against a fixture of 20 members and 5,000 expenses, the endpoint responds within 500ms at the 95th percentile.\n\nAlready done (do not rebuild): Add expense creation with three split types\nNot your scope (handled separately): Implement minimum-payment settlement algorithm; Add endpoint to record a settlement payment; Add weekly open-balances digest email job"
+    },
+    {
+      "id": "notifications-event-emails",
+      "title": "Send group-added and expense-recorded emails",
+      "description": "Send transactional emails when a user joins a group and when an expense involving them is recorded, respecting their preferences. Acceptance: sending is skipped when the relevant preference is false; expense emails go only to the payer and split participants.",
+      "dependencies": [
+        "group-invitations-api",
+        "expenses-create-api",
+        "notifications-preferences-api"
+      ],
+      "complexity": "M",
+      "rationale": "A few files wiring an external email-provider integration into two existing flows, no new schema.",
+      "requirement_ids": [
+        "FR-8"
+      ],
+      "agent_prompt": "Implement event-triggered notification emails. Add a notification service (e.g. src/services/notifications.ts) with sendGroupAddedEmail(userId, groupId) and sendExpenseRecordedEmail(expenseId), using an email-provider client (e.g. nodemailer/SES), swappable for a mock/stub in tests. Call sendGroupAddedEmail when an invitation is accepted, and call sendExpenseRecordedEmail after an expense is created, targeting only the payer and split participants. Before sending, check the target user's notification_preferences (group_added / expense_recorded respectively) and skip silently if false. Done when: accepting an invitation for a user with group_added=true triggers exactly one send call, and none for group_added=false; creating an expense sends only to payer/participants with expense_recorded=true, and none to opted-out members or non-participants.\n\nAlready done (do not rebuild): Add single-use 7-day invite links; Add expense creation with three split types; Add per-notification-type preference settings\nNot your scope (handled separately): nothing depends on this task."
+    },
+    {
+      "id": "csv-export-api",
+      "title": "Add CSV export of group expense history",
+      "description": "Create GET /api/groups/:id/export streaming a CSV of the group's expenses over an optional date range, one row per expense and one column per member's share. Acceptance: an unranged export includes every expense; a date range excludes expenses outside it.",
+      "dependencies": [
+        "expenses-create-api"
+      ],
+      "complexity": "S",
+      "rationale": "One endpoint on existing schema, no new table, no new dependency.",
+      "requirement_ids": [
+        "FR-9"
+      ],
+      "agent_prompt": "Implement CSV expense export. Add GET /api/groups/:id/export?from=&to=&format=csv (member-only) that streams a text/csv response with a header row (description, date, payer, amount, then one column per current group member) and one data row per expense in the group, filling each member's column with that member's expense_splits share for the row (blank or 0 if they weren't a participant). If `from`/`to` (ISO dates) are provided, filter expenses whose expense_date falls inclusively within the range; otherwise return the full history. Render amounts from their integer-minor-unit values without floating-point rounding artifacts. Done when: a request with no date range returns one CSV row per expense in the group with one column per member; a narrowed date range excludes expenses outside it.\n\nAlready done (do not rebuild): Add expense creation with three split types\nNot your scope (handled separately): nothing depends on this task."
+    },
+    {
+      "id": "settlement-plan-algorithm",
+      "title": "Implement minimum-payment settlement algorithm",
+      "description": "Implement a pure function computing the minimum set of payments zeroing all balances, exposed via GET /api/groups/:id/settlement, with property-based tests. Acceptance: for randomized balance sets the plan zeroes every balance and no one pays more than their debt.",
+      "dependencies": [
+        "balances-view-api"
+      ],
+      "complexity": "L",
+      "rationale": "Implements a settlement/scheduling algorithm, explicitly named in the rubric's L clause as genuine algorithmic risk.",
+      "requirement_ids": [
+        "FR-7",
+        "NFR-4"
+      ],
+      "agent_prompt": "Implement the settlement-plan algorithm. Add a pure function computeSettlementPlan(balances: {userId, netMinor}[]) -> {from, to, amountMinor}[] (e.g. src/services/settlement.ts) using a greedy max-debtor/max-creditor matching approach to minimize the number of payments, operating only on integer minor units. Expose it via GET /api/groups/:id/settlement (member-only), feeding it the group's current balances. Add property-based tests (e.g. with fast-check) generating random balance sets (that sum to zero) and asserting: after applying the returned plan, every balance is zero, and no payer's total payments exceed their original debt. Done when: the property-based test suite passes across many randomized balance sets, and the GET endpoint returns a valid plan for a real seeded group.\n\nAlready done (do not rebuild): Add per-counterparty group balances endpoint\nNot your scope (handled separately): nothing depends on this task."
+    },
+    {
+      "id": "settlement-record-payment-api",
+      "title": "Add endpoint to record a settlement payment",
+      "description": "Create POST /api/groups/:id/settlements recording a payment between two members, adjusting balances the same way an expense does. Adds the settlements table. Acceptance: recording a payment equal to an existing debt zeroes that pair's balance on a subsequent balances call.",
+      "dependencies": [
+        "balances-view-api"
+      ],
+      "complexity": "M",
+      "rationale": "Introduces the new settlements table plus the code that reads and writes it.",
+      "requirement_ids": [
+        "FR-7",
+        "NFR-1"
+      ],
+      "agent_prompt": "Implement settlement-payment recording. Create a `settlements` table (id, group_id FK, payer_id FK users, payee_id FK users, amount_minor BIGINT, settled_at DATE, created_by FK users, created_at). Add POST /api/groups/:id/settlements (member-only) accepting {payer_id, payee_id, amount_minor, date}, validating amount_minor is a positive integer and both users are members of the group. This task assumes a balances endpoint already aggregates expense_splits into per-counterparty net amounts — extend that same aggregation to also subtract recorded settlements between the relevant pair. Done when: recording a settlement equal to an existing debt between two members results in that pair's balance reading zero on the balances endpoint afterward; a non-member payer/payee or non-positive amount returns 400.\n\nAlready done (do not rebuild): Add per-counterparty group balances endpoint\nNot your scope (handled separately): Add paginated group activity feed"
+    },
+    {
+      "id": "weekly-digest-job",
+      "title": "Add weekly open-balances digest email job",
+      "description": "Build a scheduled job emailing each opted-in member a summary of their open balances across all groups. Acceptance: running the job sends exactly one email per opted-in user, none to opted-out users.",
+      "dependencies": [
+        "balances-view-api",
+        "notifications-preferences-api"
+      ],
+      "complexity": "M",
+      "rationale": "A few files (cron wiring plus digest composition) reusing existing balance and preference logic, no new schema.",
+      "requirement_ids": [
+        "FR-8"
+      ],
+      "agent_prompt": "Implement the weekly balances digest job. Add a scheduled job (e.g. src/jobs/weeklyDigest.ts, run via node-cron or an equivalent scheduler) that, for every user with notification_preferences.weekly_digest=true, computes their current open balances across all groups they belong to (reuse the existing balances aggregation logic) and sends a single email summarizing those balances. Users with weekly_digest=false must receive nothing. Done when: invoking the job function against a fixture of users with mixed weekly_digest flags results in exactly one email sent per opted-in user, containing their balances across all their groups, and zero emails to opted-out users.\n\nAlready done (do not rebuild): Add per-counterparty group balances endpoint; Add per-notification-type preference settings\nNot your scope (handled separately): nothing depends on this task."
+    },
+    {
+      "id": "activity-feed-api",
+      "title": "Add paginated group activity feed",
+      "description": "Create GET /api/groups/:id/activity merging expenses, edits/deletes, settlements, and membership changes into one reverse-chronological, cursor-paginated feed of 50 entries per page. Acceptance: a group with over 50 events returns exactly 50 newest entries plus a working next-page cursor.",
+      "dependencies": [
+        "group-owner-management-api",
+        "group-invitations-api",
+        "expenses-edit-delete-api",
+        "settlement-record-payment-api"
+      ],
+      "complexity": "M",
+      "rationale": "A few files merging several existing event sources into one paginated query, no new table required.",
+      "requirement_ids": [
+        "FR-10"
+      ],
+      "agent_prompt": "Implement the group activity feed. Add GET /api/groups/:id/activity?cursor=&limit=50 (member-only, limit capped at 50) that merges rows from audit_log (expense creates/edits/deletes), settlements, and membership-change events (invitation accepted, member removed, ownership transferred, group renamed) into one list ordered by created_at descending. Each returned entry must include its type (expense|edit|settlement|membership), the actor, a human-readable summary, and its timestamp. Return a cursor for fetching the next page. Done when: a group seeded with more than 50 mixed events returns exactly the 50 newest entries in correct reverse-chronological order, and following the returned cursor fetches the next 50 in the correct order.\n\nAlready done (do not rebuild): Add owner-only rename, remove, transfer endpoints; Add single-use 7-day invite links; Add expense edit/delete with audit trail; Add endpoint to record a settlement payment\nNot your scope (handled separately): nothing depends on this task."
+    }
+  ]
+}

@@ -17,7 +17,6 @@ shape the ordering, coverage and rendering code already speaks.
 from __future__ import annotations
 
 from enum import Enum
-from typing import Literal
 
 from pydantic import BaseModel, Field
 
@@ -28,14 +27,6 @@ class Complexity(str, Enum):
     S = "S"
     M = "M"
     L = "L"
-
-
-class Severity(str, Enum):
-    """How much a verifier finding should worry the reader."""
-
-    INFO = "info"
-    WARN = "warn"
-    ERROR = "error"
 
 
 # ── Model-facing ──────────────────────────────────────────────────────────────
@@ -96,32 +87,38 @@ class TaskGraph(BaseModel):
 # ── Stage 3: what the verifier agent returns ──────────────────────────────────
 
 
-class Finding(BaseModel):
-    code: str = Field(
-        description="requirement-uncovered | dependency-missing | complexity-suspect | "
-        "acceptance-criteria-missing"
-    )
-    severity: Severity = Severity.WARN
-    message: str
+class Note(BaseModel):
+    """One piece of advice, tied to the part of the plan it is about."""
+
+    text: str
     task_ids: list[str] = Field(default_factory=list)
     requirement_ids: list[str] = Field(default_factory=list)
 
     @property
     def cites_something(self) -> bool:
-        """A finding that names nothing is not actionable, and the verifier is told to omit it."""
+        """A note that names nothing is not actionable, and the verifier is told to omit it."""
         return bool(self.task_ids or self.requirement_ids)
 
 
 class Verification(BaseModel):
-    """The audit result. Advisory: it reports, it never rewrites the plan.
+    """The third stage's output. It advises; it does not grade and it never rewrites.
 
-    Note the schema has no ``tasks`` field. That is the enforcement, not just the instruction — a
-    verifier that tries to hand back a corrected plan has it dropped at validation.
+    There is deliberately no verdict. This stage never sees the PRD — it reasons over two upstream
+    *model* outputs, the understanding and the ordered plan — so a pass/fail on that basis would be
+    a judgement it has no standing to make. What it can honestly produce is what would make the plan
+    better and what the PRD leaves undecided, which is what a human reads a review for anyway.
+
+    Note the schema still has no ``tasks`` field. That is the enforcement, not just the instruction:
+    a verifier that tries to hand back a corrected plan has it dropped at validation.
     """
 
-    verdict: Literal["pass", "pass_with_findings", "fail"] = "pass"
     coverage_note: str = ""
-    findings: list[Finding] = Field(default_factory=list)
+    improvements: list[Note] = Field(default_factory=list)
+    open_questions: list[Note] = Field(default_factory=list)
+
+    @property
+    def is_empty(self) -> bool:
+        return not (self.improvements or self.open_questions or self.coverage_note.strip())
 
 
 # ── Composition ───────────────────────────────────────────────────────────────
@@ -161,6 +158,9 @@ class StageMeta(BaseModel):
     name: str
     key: str = ""
     cache: str = Field(default="miss", description="miss | hit-disk | hit-memory | skipped")
+    #: This stage's model. Defaulted, and usually the same for all three — it earns its place when
+    #: they differ, because then "which model wrote this" becomes a per-stage question.
+    model: str = ""
     duration_ms: int = 0
     input_tokens: int = 0
     output_tokens: int = 0

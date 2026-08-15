@@ -7,6 +7,9 @@ system text, the parser, the ordering downstream — is shared.
 
 Only the reader stage ever carries a document, so this asymmetry costs one PDF upload per chain
 instead of three.
+
+Which **model** answers is per stage here, as it is on the CLI: each stage is its own call, so the
+`models` map simply decides what goes in each one.
 """
 
 from __future__ import annotations
@@ -23,11 +26,21 @@ logger = logging.getLogger("api")
 class AnthropicApiClient(LlmClient):
     kind = "api"
 
-    def __init__(self, model: str, api_key: str | None = None) -> None:
+    def __init__(
+        self,
+        model: str,
+        api_key: str | None = None,
+        models: dict[str, str] | None = None,
+    ) -> None:
+        #: The fallback, and what every stage uses unless `models` names something else for it.
         self.model = model
+        self._models = dict(models or {})
         self._api_key = api_key or ANTHROPIC_API_KEY
         if not self._api_key:
             raise LlmError("ANTHROPIC_API_KEY is not set.", status_code=500)
+
+    def model_for(self, stage: str) -> str:
+        return self._models.get(stage) or self.model
 
     def complete(self, request: LlmRequest) -> LlmResult:
         try:
@@ -51,11 +64,12 @@ class AnthropicApiClient(LlmClient):
             )
         content.append({"type": "text", "text": request.prompt})
 
-        logger.info("stage %s: calling %s (max_tokens=%d)", request.stage, self.model, request.max_tokens)
+        model = self.model_for(request.stage)
+        logger.info("stage %s: calling %s (max_tokens=%d)", request.stage, model, request.max_tokens)
 
         try:
             message = client.messages.create(
-                model=self.model,
+                model=model,
                 max_tokens=request.max_tokens,
                 system=request.system,
                 messages=[{"role": "user", "content": content}],

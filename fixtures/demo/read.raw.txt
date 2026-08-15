@@ -1,0 +1,80 @@
+{
+  "project_summary": "SplitTab is a mobile-first web app for small groups to log shared expenses, see always-accurate per-member balances, and get the minimum set of payments that settles the group. The hardest part is the money model: every amount and split must be integer minor units that reconcile exactly to the cent across equal/exact/percentage splits, edits, and a settlement algorithm whose correctness is proven with property-based tests.",
+  "domain": "",
+  "actors": [],
+  "requirements": [
+    {
+      "id": "FR-1",
+      "text": "A user signs up with email and password, and signs in to receive a session. Passwords are stored hashed. Sessions expire after 30 days.",
+      "category": "auth"
+    },
+    {
+      "id": "FR-2",
+      "text": "A signed-in user can create a group with a name and a base currency. The creator becomes the owner and the first member. There is exactly one owner and ownership can be transferred; the owner can rename the group and remove members.",
+      "category": "groups"
+    },
+    {
+      "id": "FR-3",
+      "text": "An owner can invite a member by email. The invitation produces a single-use link valid for 7 days. Accepting it adds the user to the group.",
+      "category": "invitations"
+    },
+    {
+      "id": "FR-4",
+      "text": "A member records an expense with description, amount, date, payer, and shared members, split equally, by exact amounts, or by percentage shares. Splits must sum to the total; a mismatch is rejected with the difference.",
+      "category": "expenses"
+    },
+    {
+      "id": "FR-5",
+      "text": "Any member can edit or delete an expense. Every change is recorded in an immutable audit trail showing who changed what and when. Balances recompute after any edit.",
+      "category": "expenses"
+    },
+    {
+      "id": "FR-6",
+      "text": "Each member sees, for every group, what they owe and what they are owed, per counterparty. The sum of all balances in a group is always zero.",
+      "category": "balances"
+    },
+    {
+      "id": "FR-7",
+      "text": "A member can ask for a settlement plan: the minimum number of payments that brings every balance to zero. Recording a settlement payment updates balances the same way an expense does.",
+      "category": "settlement"
+    },
+    {
+      "id": "FR-8",
+      "text": "A member receives an email when added to a group, when an expense involving them is recorded, and a weekly digest of open balances. Each is individually switchable.",
+      "category": "notifications"
+    },
+    {
+      "id": "FR-9",
+      "text": "A member can export a group's expense history as CSV, covering an optional date range, with one row per expense and one column per member's share.",
+      "category": "export"
+    },
+    {
+      "id": "FR-10",
+      "text": "A group has a reverse-chronological activity feed of expenses, edits, settlements, and membership changes, paged at 50 entries.",
+      "category": "activity"
+    },
+    {
+      "id": "NFR-1",
+      "text": "Money is never stored or computed in floating point. All amounts are integer minor units, and every split must reconcile to the cent.",
+      "category": "money"
+    },
+    {
+      "id": "NFR-2",
+      "text": "A group of 20 members with 5,000 expenses loads its balance view in under 500 ms at the 95th percentile.",
+      "category": "performance"
+    },
+    {
+      "id": "NFR-3",
+      "text": "Every write is authorised against group membership. A user must not be able to read or alter a group they do not belong to, including by guessing an id.",
+      "category": "security"
+    },
+    {
+      "id": "NFR-4",
+      "text": "The settlement algorithm is covered by property-based tests asserting that resulting balances are all zero and no member pays more than they owed.",
+      "category": "testing"
+    }
+  ],
+  "constraints": [],
+  "out_of_scope": [],
+  "open_questions": []
+}
