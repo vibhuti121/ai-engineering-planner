@@ -13,7 +13,7 @@ from dataclasses import dataclass
 
 from pypdf import PdfReader
 
-from app.config import MAX_PAGES, MAX_UPLOAD_BYTES
+from app.config import MAX_PAGES, MAX_UPLOAD_BYTES, MIN_TEXT_CHARS_PER_PAGE
 
 
 class PdfRejected(Exception):
@@ -33,8 +33,18 @@ class PdfDocument:
     text: str
 
     @property
+    def char_count(self) -> int:
+        return len(self.text.strip())
+
+    @property
     def has_text(self) -> bool:
-        return len(self.text.strip()) >= 40
+        """True when pypdf found a usable text layer.
+
+        Measured as characters *per page* rather than a flat minimum. A flat minimum cannot
+        distinguish a one-page brief that is genuinely short from a ten-page scan whose only
+        extractable characters are page numbers — it rejects the first along with the second.
+        """
+        return self.char_count >= MIN_TEXT_CHARS_PER_PAGE * self.page_count
 
 
 _WHITESPACE = re.compile(r"\s+")

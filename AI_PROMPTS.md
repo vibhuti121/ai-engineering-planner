@@ -221,6 +221,24 @@ while it waits.
 > "Write the README for a reviewer who has fifteen minutes: quickstart first, then the one design
 > decision that matters, then the honest limitations."
 
+**B9 — a bug found by someone else uploading their own file.**
+> "I uploaded my own one-line PRD and got: *No text could be extracted from this PDF, and the CLI
+> provider cannot read a scanned document.*"
+
+The file was not scanned. `pypdf` extracted `'Task:\nImplement User Registration API'` — 37
+characters — and the text-layer check was a flat `>= 40`, so a real document failed by three
+characters and the error blamed the wrong cause. Two things were wrong and both were worth fixing:
+
+- **The threshold.** A flat minimum cannot separate a short document from a scan. Replaced with a
+  density, `MIN_TEXT_CHARS_PER_PAGE = 25` — 37 characters on one page passes, the same 37 spread
+  over ten pages does not.
+- **The message.** It asserted that no text was found while holding 37 characters of it. It now
+  reports what it measured: *"Only 37 characters of text could be extracted from this 1-page PDF."*
+  A diagnostic that states the wrong cause confidently costs more than no diagnostic.
+
+`tests/test_pdf_validator.py` now pins both sides of that boundary. The fixed build plans the same
+file into 8 tasks across 3 waves with zero warnings.
+
 ---
 
 ## Section C — how the product prompt evolved

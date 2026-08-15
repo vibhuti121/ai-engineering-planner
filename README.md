@@ -119,6 +119,19 @@ curl -s localhost:8000/api/cache                                            # hi
 `?refresh=true` bypasses the lookup and overwrites the entry — needed to prove the *model* is stable
 on a genuine re-run, not just that the cache echoes itself.
 
+The claim that the key tracks *content* rather than bytes is also checkable.
+`samples/sample-prd-reexported.pdf` is the same PRD written out by a second run of the generator —
+3,910 bytes against 8,366 — and it lands on the same id, so uploading it after the sample is a HIT:
+
+```bash
+.venv/bin/python -c "
+from app.services.pdf_validator import validate_and_extract
+from app.services.cache_key import compute_plan_id
+f = lambda p: compute_plan_id(validate_and_extract(open(p,'rb').read(), p), 'claude-sonnet-5', 'cli')
+print(f('samples/sample-prd.pdf'), f('samples/sample-prd-reexported.pdf'))"
+# 44d249ee66ea861a 44d249ee66ea861a
+```
+
 Storage is behind a `PlanStore` ABC with one implementation today: `InMemoryPlanStore`, an
 `OrderedDict` LRU bounded at 100 entries (an unbounded dict in a service that accepts uploads is a
 memory leak) guarded by a lock. Two honest consequences: **the cache dies with the process**, and
@@ -208,6 +221,8 @@ fresh agent from rebuilding its own prerequisite or wandering into the next task
 | `samples/sample-output.json` | **Real application output** from a live run — 17 tasks, 14 requirements, 9 waves, zero warnings. Not hand-written. |
 | `samples/sample-output.md` | The same plan rendered as markdown. |
 | `fixtures/demo-plan.json` | The model's raw extraction from that run, replayed by demo mode. |
+| `samples/sample-prd-reexported.pdf` | The same PRD, different bytes (8,366 vs 3,910). Exists to demonstrate that the cache key is content-addressed — it hits the sample's entry. |
+| `samples/req_v1.pdf` | A one-line brief, 37 characters. The file that exposed the text-layer bug in `AI_PROMPTS.md` B9; kept as the regression case, and it plans into 9 tasks across 3 waves. |
 
 ---
 
@@ -218,9 +233,10 @@ Stated plainly, because pretending otherwise is worse than the limitation.
 - **The cache is in-memory.** It dies with the process and is per-worker. The `PlanStore` port is
   there so Redis or SQLite is a new class, not a refactor.
 - **Scanned/image-only PDFs.** The CLI provider rejects them with a 422 pointing at the API
-  provider, which can read them natively. The cache falls back to hashing raw bytes for these, so
-  two exports of the same scan will miss — correct, since we cannot prove they are the same
-  document.
+  provider, which can read them natively. "Has a text layer" is judged by characters *per page*
+  (see `ASSUMPTIONS.md` 7a) — a heuristic, so the rejection quotes the numbers it measured rather
+  than asserting a cause. The cache falls back to hashing raw bytes for these, so two exports of the
+  same scan will miss — correct, since we cannot prove they are the same document.
 - **Plan quality is not automatically evaluated.** There is no rubric-scored eval harness; quality
   was tuned by reading real outputs against the sample PRD. The prompt iterations that resulted are
   recorded in `AI_PROMPTS.md` section C.

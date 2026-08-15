@@ -44,3 +44,9 @@ PLAN_CACHE_SIZE = int(os.environ.get("PLAN_CACHE_SIZE", "100"))
 MAX_UPLOAD_BYTES = 32 * 1024 * 1024
 MAX_PAGES = 100
 MAX_TASKS = 40
+
+# Below this many extracted characters *per page*, a PDF is treated as having no usable text layer
+# — i.e. a scan or an image export. Deliberately a density and not a flat count: a one-page PDF
+# holding a single short brief is a legitimate document, while a ten-page scan whose only
+# extractable characters are page numbers is not, and a flat minimum cannot tell those apart.
+MIN_TEXT_CHARS_PER_PAGE = 25

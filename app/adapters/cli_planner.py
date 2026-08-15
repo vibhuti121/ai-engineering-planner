@@ -53,10 +53,17 @@ class ClaudeCliPlanner(Planner):
 
     def plan(self, document: PdfDocument) -> PlannerOutput:
         if not document.has_text:
+            # Report what was actually found. "No text could be extracted" is a lie when 37
+            # characters came out, and it sends the reader looking for the wrong problem.
+            found = (
+                "No text at all could be extracted"
+                if document.char_count == 0
+                else f"Only {document.char_count} characters of text could be extracted"
+            )
             raise PlannerError(
-                "No text could be extracted from this PDF, and the CLI provider cannot read a "
-                "scanned document. Set ANTHROPIC_API_KEY to use the API provider, which reads the "
-                "PDF natively.",
+                f"{found} from this {document.page_count}-page PDF, so it is almost certainly a "
+                "scan or an image export. The CLI provider can only read a text layer — set "
+                "ANTHROPIC_API_KEY to use the API provider, which reads the PDF natively.",
                 status_code=422,
             )
 
