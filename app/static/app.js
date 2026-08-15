@@ -19,7 +19,7 @@ fetch("/api/health")
     if (h.provider === "demo") {
       banner.className = "banner demo";
       banner.textContent =
-        "Demo mode — replaying a previously generated plan from fixtures/demo-plan.json. " +
+        "Demo mode — each stage replays a recorded response from fixtures/demo/. " +
         "Set ANTHROPIC_API_KEY (or install the Claude CLI) for live planning.";
     } else {
       banner.textContent =
@@ -54,6 +54,38 @@ $("file").addEventListener("change", (e) => chooseFile(e.target.files[0]));
 );
 dropzone.addEventListener("drop", (e) => chooseFile(e.dataTransfer.files[0]));
 
+// ── progress ──────────────────────────────────────────────────────────────────
+// The stages come from the SERVER, not a client-side animation. A progress display that guesses
+// is worse than none — this one reports the step the request is actually in.
+// Must match `observability.STAGE_SEQUENCE` exactly and in order — a name the server emits but this
+// list lacks makes `indexOf` return -1, which blanks every step at the moment somebody is watching.
+const STAGES = [
+  "validating",
+  "cache-lookup",
+  "reading",
+  "graphing",
+  "ordering",
+  "verifying",
+  "rendering",
+  "stored",
+];
+
+function paintSteps(stage, detail, elapsed) {
+  const reached = STAGES.indexOf(stage);
+  document.querySelectorAll("#steps .step").forEach((li, i) => {
+    li.classList.toggle("done", reached > i);
+    li.classList.toggle("active", reached === i);
+    const label = li.dataset.label || (li.dataset.label = li.textContent);
+    li.textContent =
+      reached === i ? `${label} — ${detail} (${elapsed})` : label;
+  });
+}
+
+function clock(seconds) {
+  const s = Math.floor(seconds);
+  return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}`;
+}
+
 // ── submit ────────────────────────────────────────────────────────────────────
 $("upload-form").addEventListener("submit", async (e) => {
   e.preventDefault();
@@ -64,24 +96,77 @@ $("upload-form").addEventListener("submit", async (e) => {
   status.textContent = "Planning… a cache miss calls the model and takes a couple of minutes.";
   $("submit").disabled = true;
 
+  const trace = (crypto.randomUUID && crypto.randomUUID()) || String(Date.now());
+  const steps = $("steps");
+  steps.hidden = false;
+  paintSteps("validating", "starting", "0:00");
+
+  const poll = setInterval(async () => {
+    try {
+      const r = await fetch(`/api/progress/${trace}`);
+      if (!r.ok) return;
+      const p = await r.json();
+      paintSteps(p.stage, p.detail, clock(p.elapsed_s));
+    } catch (_) {
+      /* a dropped poll is not an error — the upload itself is still in flight */
+    }
+  }, 1000);
+
   const body = new FormData();
   body.append("file", selectedFile);
 
   try {
-    const query = $("refresh").checked ? "?refresh=true" : "";
-    const response = await fetch(`/api/plan${query}`, { method: "POST", body });
+    const params = new URLSearchParams({ trace });
+    if ($("refresh").checked) params.set("refresh", "true");
+    const response = await fetch(`/api/plan?${params}`, { method: "POST", body });
     const payload = await response.json();
     if (!response.ok) throw new Error(payload.error || `HTTP ${response.status}`);
     currentPlan = payload;
     render(payload);
     status.textContent = "";
+    steps.hidden = true;
   } catch (err) {
     status.className = "status error";
     status.textContent = err.message;
+    steps.hidden = true;
   } finally {
+    clearInterval(poll);
     $("submit").disabled = false;
   }
 });
+
+// The only *visible* evidence that a third agent ran, and it sits below the task list because it
+// is commentary on the plan rather than a gate on it: improvements worth making, and questions the
+// PRD leaves for a human. Nothing here changes a task.
+function renderVerification(verification) {
+  const section = $("review");
+  const panel = $("verification");
+  panel.replaceChildren();
+
+  const notes = verification
+    ? [...verification.improvements, ...verification.open_questions]
+    : [];
+  const note = verification ? (verification.coverage_note || "").trim() : "";
+  // An empty Review heading reads as a bug, so the whole section stays hidden.
+  section.hidden = !notes.length && !note;
+  if (section.hidden) return;
+
+  if (note) panel.append(el("p", "verify-note", note));
+  appendNotes(panel, "Improvements", verification.improvements);
+  appendNotes(panel, "Open questions", verification.open_questions);
+}
+
+function appendNotes(panel, heading, notes) {
+  if (!notes || !notes.length) return;
+  panel.append(el("h3", "review-heading", heading));
+  notes.forEach((n) => {
+    const cited = [...n.task_ids, ...n.requirement_ids].join(", ");
+    const row = el("div", "finding");
+    row.append(el("span", "finding-message", n.text));
+    if (cited) row.append(el("span", "finding-cites", cited));
+    panel.append(row);
+  });
+}
 
 // ── render ────────────────────────────────────────────────────────────────────
 function render(plan) {
@@ -102,9 +187,24 @@ function render(plan) {
   );
   if (meta.output_tokens) bar.append(el("span", "chip", `${meta.output_tokens} output tokens`));
 
+  // One chip per stage. This is where partial reuse becomes visible: after a prompt edit only the
+  // stages downstream of it say "miss", and the rest cost nothing.
+  // The model is named only when it differs from the headline one — with a single model across all
+  // three stages, repeating it three times is noise.
+  (meta.stages || []).forEach((s) =>
+    bar.append(el("span", `chip stage ${s.cache}`,
+      `${s.name} ${s.cache}` +
+      (s.cache === "miss" ? ` ${(s.duration_ms / 1000).toFixed(1)}s` : "") +
+      (s.model && s.model !== meta.model ? ` · ${s.model}` : "")))
+  );
+
+  // Only the application's own warnings land here — an uncovered requirement, a dropped dependency
+  // edge, a stage that failed. The reviewer's advice is not a warning and renders in `#review`.
   const warnings = $("warnings");
   warnings.replaceChildren();
   plan.warnings.forEach((w) => warnings.append(el("div", "warning", w)));
+
+  renderVerification(plan.verification);
 
   $("summary").textContent = plan.project_summary;
 

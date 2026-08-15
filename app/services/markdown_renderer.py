@@ -81,7 +81,55 @@ def render(plan: PlanResponse) -> str:
             a("</details>")
             a("")
 
+    _render_review(plan, a)
+
     return "\n".join(out)
+
+
+def _render_review(plan: PlanResponse, a) -> None:
+    """The third stage's advice — last, deliberately.
+
+    It is not a gate and it is not a problem with the plan, so it does not belong beside the
+    warnings at the top. A reader gets the plan first and the commentary on it after, which is the
+    order a review is useful in. Absent or empty, the section is skipped entirely — an empty
+    heading reads as a bug.
+    """
+    review = plan.verification
+    if review is None or review.is_empty:
+        return
+
+    a("## Review")
+    a("")
+    a("_Advisory. Produced by a third model pass over the understanding and the ordered plan — "
+      "it never saw the PRD, so it suggests and asks; it does not grade._")
+    a("")
+
+    if review.coverage_note.strip():
+        a(review.coverage_note.strip())
+        a("")
+
+    if review.improvements:
+        a("### Improvements")
+        a("")
+        for note in review.improvements:
+            a(f"- {_note(note)}")
+        a("")
+
+    if review.open_questions:
+        a("### Open questions")
+        a("")
+        for note in review.open_questions:
+            a(f"- {_note(note)}")
+        a("")
+
+
+def _note(note) -> str:
+    """One advice line, with whatever it cites trailing it in backticks."""
+    cited = [*note.task_ids, *note.requirement_ids]
+    text = note.text.strip()
+    if not cited:
+        return text
+    return f"{text} ({', '.join(f'`{c}`' for c in cited)})"
 
 
 def _cell(text: str) -> str:

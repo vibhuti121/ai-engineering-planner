@@ -9,11 +9,11 @@ from __future__ import annotations
 
 import io
 import re
-from dataclasses import dataclass
 
 from pypdf import PdfReader
 
-from app.config import MAX_PAGES, MAX_UPLOAD_BYTES, MIN_TEXT_CHARS_PER_PAGE
+from app.config import MAX_PAGES, MAX_UPLOAD_BYTES
+from app.domain.document import PdfDocument
 
 
 class PdfRejected(Exception):
@@ -23,28 +23,6 @@ class PdfRejected(Exception):
         super().__init__(message)
         self.message = message
         self.status_code = status_code
-
-
-@dataclass
-class PdfDocument:
-    raw: bytes
-    filename: str
-    page_count: int
-    text: str
-
-    @property
-    def char_count(self) -> int:
-        return len(self.text.strip())
-
-    @property
-    def has_text(self) -> bool:
-        """True when pypdf found a usable text layer.
-
-        Measured as characters *per page* rather than a flat minimum. A flat minimum cannot
-        distinguish a one-page brief that is genuinely short from a ten-page scan whose only
-        extractable characters are page numbers — it rejects the first along with the second.
-        """
-        return self.char_count >= MIN_TEXT_CHARS_PER_PAGE * self.page_count
 
 
 _WHITESPACE = re.compile(r"\s+")
@@ -99,3 +77,8 @@ def validate_and_extract(raw: bytes, filename: str) -> PdfDocument:
         page_count=page_count,
         text="\n\n".join(chunks).strip(),
     )
+
+
+# Re-exported: `PdfDocument` now lives in `app.domain.document` so the ports layer can depend on it
+# without depending on this module. Callers importing it from here keep working.
+__all__ = ["PdfDocument", "PdfRejected", "normalize", "validate_and_extract"]

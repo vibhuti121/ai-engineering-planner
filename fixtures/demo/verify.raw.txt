@@ -1,0 +1,5 @@
+{
+  "coverage_note": "14 of 14 requirements are implemented by at least one of the 17 tasks. Computed by tools/make_demo_fixtures.py, not reviewed by a model — see provenance.json.",
+  "improvements": [],
+  "open_questions": []
+}

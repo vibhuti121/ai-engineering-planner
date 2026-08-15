@@ -5,3 +5,8 @@ __pycache__/
 .pytest_cache/
 .DS_Store
 .idea/
+
+# Per-stage cache artifacts (the L2 tier). Local working state, not a deliverable —
+# each key folds in the provider and that stage's model, so it reuses on nobody
+# else's machine. See ASSUMPTIONS.md #23.
+artifacts/

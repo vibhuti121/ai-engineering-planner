@@ -30,6 +30,16 @@
       </div>
     </form>
     <p id="status" class="status"></p>
+    <ol id="steps" hidden>
+      <li class="step" data-stage="validating">Validating the PDF</li>
+      <li class="step" data-stage="cache-lookup">Checking the cache</li>
+      <li class="step" data-stage="reading">① Reading the PRD</li>
+      <li class="step" data-stage="graphing">② Building the task graph</li>
+      <li class="step" data-stage="ordering">Ordering (topological sort)</li>
+      <li class="step" data-stage="verifying">③ Reviewing the plan</li>
+      <li class="step" data-stage="rendering">Rendering markdown</li>
+      <li class="step" data-stage="stored">Stored</li>
+    </ol>
   </section>
 
   <section id="result" hidden>
@@ -50,6 +60,16 @@
     </p>
     <div id="waves"></div>
     <div id="tasks"></div>
+
+    <!-- The third stage advises; it does not gate. So it reads last, after the plan it is about. -->
+    <section id="review" hidden>
+      <h2>Review</h2>
+      <p class="note">
+        Advisory. A third model pass over the understanding and the ordered plan — it never saw the
+        PRD, so it suggests and asks; it does not grade, and nothing here changes a task.
+      </p>
+      <div id="verification"></div>
+    </section>
 
     <div class="downloads">
       <button id="dl-json">Download JSON</button>
