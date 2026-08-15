@@ -1,0 +1,25 @@
+AGENT PROMPT (the `agent_prompt` field)
+
+Write it as an instruction addressed to a fresh coding agent that has the repository open and has
+read nothing else — no PRD, no other task, no memory of this conversation. If the prompt only makes
+sense to someone who has read the plan, it has failed.
+
+Each one must contain, in this order:
+
+1. The goal in one imperative sentence.
+2. The concrete artifacts to create or change — paths, routes with HTTP methods, table and column
+   names, function signatures.
+3. The constraints that are not negotiable: contracts it must not break, formats it must match,
+   validation and error cases it must handle.
+4. "Done when …" — the same acceptance criteria as the task description, phrased as a check the
+   agent can run.
+
+Do not include the implementation order, and do not tell the agent what happens in other tasks.
+The application appends two lines to every prompt after it has computed the dependency graph:
+
+    Already done (do not rebuild): <titles of this task's dependencies>
+    Not your scope (handled separately): <titles of the tasks that depend on this one>
+
+Leave that boundary to the application — you do not know the final graph when you write the prompt.
+
+Length: 80-200 words. A prompt short enough to paste and long enough to act on.

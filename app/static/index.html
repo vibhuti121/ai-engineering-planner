@@ -1,0 +1,63 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>AI Engineering Planner</title>
+<link rel="stylesheet" href="/static/styles.css">
+</head>
+<body>
+<header>
+  <div class="wrap">
+    <h1>AI Engineering Planner</h1>
+    <p class="tagline">Drop a PRD. Get an ordered plan an AI coding agent can execute, task by task.</p>
+    <div id="provider" class="banner">checking provider…</div>
+  </div>
+</header>
+
+<main class="wrap">
+  <section id="upload-panel">
+    <form id="upload-form">
+      <label id="dropzone" for="file">
+        <strong>Choose a PDF</strong>
+        <span>or drag it here — max 32 MB, 100 pages</span>
+        <em id="filename"></em>
+        <input type="file" id="file" name="file" accept="application/pdf" hidden>
+      </label>
+      <div class="controls">
+        <button type="submit" id="submit" disabled>Generate plan</button>
+        <label class="checkbox"><input type="checkbox" id="refresh"> Bypass cache (regenerate)</label>
+      </div>
+    </form>
+    <p id="status" class="status"></p>
+  </section>
+
+  <section id="result" hidden>
+    <div id="meta-bar"></div>
+    <div id="warnings"></div>
+
+    <h2>Summary</h2>
+    <p id="summary"></p>
+
+    <h2>Requirements <span id="req-count" class="count"></span></h2>
+    <table id="requirements"><thead><tr><th>ID</th><th>Category</th><th>Requirement</th></tr></thead><tbody></tbody></table>
+
+    <h2>Execution order <span id="task-count" class="count"></span></h2>
+    <p class="note">
+      Order is <strong>computed</strong> from the dependency graph by topological sort — the model
+      proposes dependencies and is never asked for an order. Tasks in the same wave have no
+      dependency between them and can run in parallel.
+    </p>
+    <div id="waves"></div>
+    <div id="tasks"></div>
+
+    <div class="downloads">
+      <button id="dl-json">Download JSON</button>
+      <button id="dl-md">Download Markdown</button>
+    </div>
+  </section>
+</main>
+
+<script src="/static/app.js"></script>
+</body>
+</html>
